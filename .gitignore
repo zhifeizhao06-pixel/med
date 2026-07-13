@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments and local configuration
+.venv/
+venv/
+env/
+.env
+.env.*
+.idea/
+.vscode/
+
+# Training artifacts
+results/
+runs/
+logs/
+checkpoints/
+wandb/
+lightning_logs/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+*.npy
+
+# Medical datasets (the small CSV metadata under data/isic_csv remains tracked)
+*.nii
+*.nii.gz
+data/ISIC/
+data/BraTS*/
+data/brats*/
+
+# OS files
+.DS_Store
+Thumbs.db
+
