@@ -12,7 +12,7 @@ def make_stage1_dataset(records, roi_size, training: bool):
         from monai.transforms import (
             Compose, CropForegroundd, EnsureChannelFirstd, EnsureTyped, Lambdad,
             LoadImaged, NormalizeIntensityd, Orientationd, RandCropByPosNegLabeld,
-            RandFlipd, RandScaleIntensityd, RandShiftIntensityd, Spacingd,
+            RandFlipd, RandScaleIntensityd, RandShiftIntensityd, Spacingd, SpatialPadd,
         )
     except ImportError as exc:
         raise ImportError("Stage 1 requires MONAI. Install world_model_pipeline/requirements.txt") from exc
@@ -28,6 +28,9 @@ def make_stage1_dataset(records, roi_size, training: bool):
     ]
     if training:
         transforms += [
+            # CropForegroundd may make one dimension smaller than the requested
+            # VAE input ROI. Pad image and label together before random crops.
+            SpatialPadd(keys=("image", "label"), spatial_size=tuple(roi_size), mode="constant"),
             RandCropByPosNegLabeld(
                 keys=("image", "label"), label_key="label", spatial_size=tuple(roi_size),
                 pos=1, neg=1, num_samples=2, image_key="image", image_threshold=0,
@@ -86,4 +89,3 @@ class CachedSliceDataset(Dataset):
                 coarse = -F.max_pool2d(-coarse.unsqueeze(0), k, stride=1, padding=k // 2).squeeze(0)
         condition = torch.cat((image, coarse.clamp(0, 1), uncertainty.clamp(0, 1)), dim=0)
         return condition, mask, f"{path.stem}_z{z:03d}"
-
