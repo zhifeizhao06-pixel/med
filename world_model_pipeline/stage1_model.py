@@ -9,7 +9,7 @@ class Stage1SegResNetVAE(nn.Module):
     segmentation logits in eval mode. The adapter normalizes that contract.
     """
 
-    def __init__(self, roi_size=(96, 96, 96), in_channels=4, out_channels=1, init_filters=16, vae_nz_dim=256):
+    def __init__(self, roi_size=(96, 96, 96), in_channels=4, out_channels=1, init_filters=16, vae_nz=256):
         super().__init__()
         try:
             from monai.networks.nets import SegResNetVAE
@@ -22,7 +22,8 @@ class Stage1SegResNetVAE(nn.Module):
             init_filters=init_filters,
             blocks_down=(1, 2, 2, 4),
             blocks_up=(1, 1, 1),
-            vae_nz_dim=vae_nz_dim,
+            # MONAI names this argument ``vae_nz`` (not ``vae_nz_dim``).
+            vae_nz=vae_nz,
             vae_estimate_std=True,
         )
 
@@ -34,4 +35,3 @@ class Stage1SegResNetVAE(nn.Module):
             logits = output
             vae_loss = logits.new_zeros(())
         return logits, vae_loss
-

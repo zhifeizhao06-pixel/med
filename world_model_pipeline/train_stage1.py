@@ -29,6 +29,7 @@ def main():
 
     from monai.losses import DiceCELoss
     from monai.metrics import DiceMetric
+    from monai.inferers import sliding_window_inference
 
     seed_everything(args.seed)
     device = device_from_arg(args.device)
@@ -60,7 +61,14 @@ def main():
         with torch.no_grad():
             for batch in val_loader:
                 image, label = batch["image"].to(device), batch["label"].to(device)
-                logits, _ = model(image)
+                # Validation volumes are full-size; sliding-window inference avoids OOM.
+                logits = sliding_window_inference(
+                    image,
+                    roi_size=tuple(args.roi_size),
+                    sw_batch_size=1,
+                    predictor=lambda patch: model(patch)[0],
+                    overlap=0.5,
+                )
                 dice_metric((torch.sigmoid(logits) > 0.5).float(), label)
         dice = float(dice_metric.aggregate())
         print(f"epoch={epoch + 1} train_loss={running / max(len(train_loader), 1):.5f} val_dice={dice:.5f}")
@@ -71,4 +79,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
