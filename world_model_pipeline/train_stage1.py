@@ -30,12 +30,21 @@ def main():
     from monai.losses import DiceCELoss
     from monai.metrics import DiceMetric
     from monai.inferers import sliding_window_inference
+    from monai.data import list_data_collate
 
     seed_everything(args.seed)
     device = device_from_arg(args.device)
     train_ds = make_stage1_dataset(load_manifest(args.manifest, "train"), args.roi_size, True)
     val_ds = make_stage1_dataset(load_manifest(args.manifest, "val"), args.roi_size, False)
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    # RandCropByPosNegLabeld returns a list of sampled patches per case.
+    # MONAI's collate flattens those lists into a regular dictionary batch.
+    train_loader = DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=4,
+        collate_fn=list_data_collate,
+    )
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2)
 
     model = Stage1SegResNetVAE(args.roi_size).to(device)
