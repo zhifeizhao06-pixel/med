@@ -19,7 +19,11 @@ def make_stage1_dataset(records, roi_size, training: bool):
 
     transforms = [
         LoadImaged(keys=("image", "label")),
-        EnsureChannelFirstd(keys=("image", "label")),
+        # ``image`` is a list of four modality files. LoadImaged stacks that
+        # list on axis 0; declare it explicitly instead of trusting per-file
+        # NIfTI channel metadata, which is inconsistent for a few BraTS cases.
+        EnsureChannelFirstd(keys="image", channel_dim=0),
+        EnsureChannelFirstd(keys="label", channel_dim="no_channel"),
         Orientationd(keys=("image", "label"), axcodes="RAS"),
         Spacingd(keys=("image", "label"), pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
         NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
