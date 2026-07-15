@@ -10,20 +10,36 @@ def make_stage1_dataset(records, roi_size, training: bool):
     try:
         from monai.data import CacheDataset
         from monai.transforms import (
-            Compose, CropForegroundd, EnsureChannelFirstd, EnsureTyped, Lambdad,
-            LoadImaged, NormalizeIntensityd, Orientationd, RandCropByPosNegLabeld,
+            Compose, ConcatItemsd, CropForegroundd, DeleteItemsd,
+            EnsureChannelFirstd, EnsureTyped, Lambdad, LoadImaged,
+            NormalizeIntensityd, Orientationd, RandCropByPosNegLabeld,
             RandFlipd, RandScaleIntensityd, RandShiftIntensityd, Spacingd, SpatialPadd,
         )
     except ImportError as exc:
         raise ImportError("Stage 1 requires MONAI. Install world_model_pipeline/requirements.txt") from exc
 
+    modality_keys = ("t1", "t1ce", "t2", "flair")
+    prepared_records = []
+    for record in records:
+        image_paths = record["image"]
+        if len(image_paths) != len(modality_keys):
+            raise ValueError(f"{record.get('id', '<unknown>')}: expected four MRI modality paths")
+        prepared_records.append(
+            {
+                "id": record["id"],
+                "label": record["label"],
+                **dict(zip(modality_keys, image_paths)),
+            }
+        )
+
     transforms = [
-        LoadImaged(keys=("image", "label")),
-        # ``image`` is a list of four modality files. LoadImaged stacks that
-        # list on axis 0; declare it explicitly instead of trusting per-file
-        # NIfTI channel metadata, which is inconsistent for a few BraTS cases.
-        EnsureChannelFirstd(keys="image", channel_dim=0),
-        EnsureChannelFirstd(keys="label", channel_dim="no_channel"),
+        # Load each 3D modality independently, then concatenate their singleton
+        # channel axes. This avoids inconsistent metadata when LoadImaged is
+        # asked to load a list of NIfTI files as one item.
+        LoadImaged(keys=(*modality_keys, "label")),
+        EnsureChannelFirstd(keys=(*modality_keys, "label"), channel_dim="no_channel"),
+        ConcatItemsd(keys=modality_keys, name="image", dim=0),
+        DeleteItemsd(keys=modality_keys),
         Orientationd(keys=("image", "label"), axcodes="RAS"),
         Spacingd(keys=("image", "label"), pixdim=(1.0, 1.0, 1.0), mode=("bilinear", "nearest")),
         NormalizeIntensityd(keys="image", nonzero=True, channel_wise=True),
@@ -46,7 +62,7 @@ def make_stage1_dataset(records, roi_size, training: bool):
             RandShiftIntensityd(keys="image", offsets=0.1, prob=0.5),
         ]
     transforms.append(EnsureTyped(keys=("image", "label")))
-    return CacheDataset(records, transform=Compose(transforms), cache_rate=0.1, num_workers=2)
+    return CacheDataset(prepared_records, transform=Compose(transforms), cache_rate=0.1, num_workers=2)
 
 
 class CachedSliceDataset(Dataset):
