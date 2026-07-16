@@ -1,14 +1,15 @@
 import argparse
+from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
 
 try:
-    from .common import device_from_arg, save_checkpoint, seed_everything
+    from .common import device_from_arg, last_checkpoint_path, restore_optimizer, save_checkpoint, seed_everything
     from .data import CachedSliceDataset
     from .stage2_model import build_stage2
 except ImportError:
-    from common import device_from_arg, save_checkpoint, seed_everything
+    from common import device_from_arg, last_checkpoint_path, restore_optimizer, save_checkpoint, seed_everything
     from data import CachedSliceDataset
     from stage2_model import build_stage2
 
@@ -22,6 +23,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--cache_dir", required=True)
     parser.add_argument("--output", default="results/world_model/stage2_best.pt")
+    parser.add_argument("--last_output", default=None, help="rolling checkpoint path (default: *_last.pt)")
+    parser.add_argument("--resume", default=None, help="checkpoint to resume from, normally *_last.pt")
     parser.add_argument("--image_size", type=int, default=128)
     parser.add_argument("--num_channels", type=int, default=64)
     parser.add_argument("--num_res_blocks", type=int, default=2)
@@ -36,22 +39,45 @@ def main():
 
     seed_everything(args.seed)
     device = device_from_arg(args.device)
-    train_ds = CachedSliceDataset(args.cache_dir, "train", args.image_size, training=True)
-    val_ds = CachedSliceDataset(args.cache_dir, "val", args.image_size, training=False)
+    checkpoint = torch.load(args.resume, map_location="cpu") if args.resume else None
+    checkpoint_model_args = checkpoint.get("model_args") if checkpoint else None
+    image_size = int(checkpoint_model_args.get("image_size", args.image_size)) if checkpoint_model_args else args.image_size
+    if checkpoint_model_args and image_size != args.image_size:
+        print(f"resume: using checkpoint image_size={image_size} instead of command-line image_size={args.image_size}")
+    train_ds = CachedSliceDataset(args.cache_dir, "train", image_size, training=True)
+    val_ds = CachedSliceDataset(args.cache_dir, "val", image_size, training=False)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
 
-    model, diffusion, model_args = build_stage2(
-        image_size=args.image_size,
-        num_channels=args.num_channels,
-        num_res_blocks=args.num_res_blocks,
-        diffusion_steps=args.diffusion_steps,
-    )
+    if checkpoint_model_args:
+        model, diffusion, model_args = build_stage2(**checkpoint_model_args)
+    else:
+        model, diffusion, model_args = build_stage2(
+            image_size=args.image_size,
+            num_channels=args.num_channels,
+            num_res_blocks=args.num_res_blocks,
+            diffusion_steps=args.diffusion_steps,
+        )
     model.to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-5)
     best = float("inf")
+    start_epoch = 0
+    if checkpoint:
+        model.load_state_dict(checkpoint["model"])
+        start_epoch = int(checkpoint.get("epoch", 0))
+        best = float(checkpoint.get("best_val_loss", checkpoint.get("val_loss", float("inf"))))
+        optimizer_restored = restore_optimizer(optimizer, checkpoint, device)
+        mode = "model and optimizer" if optimizer_restored else "model only (fresh optimizer)"
+        print(f"resumed {mode} from {args.resume}: completed_epoch={start_epoch} best_val_loss={best:.6f}")
 
-    for epoch in range(args.epochs):
+    last_output = last_checkpoint_path(args.output, args.last_output)
+    if Path(last_output).resolve() == Path(args.output).resolve():
+        raise ValueError("--last_output must be different from --output")
+    if start_epoch >= args.epochs:
+        print(f"nothing to do: checkpoint epoch {start_epoch} already reached --epochs {args.epochs}")
+        return
+
+    for epoch in range(start_epoch, args.epochs):
         model.train()
         running = 0.0
         for condition, mask, _ in train_loader:
@@ -81,9 +107,25 @@ def main():
         print(f"epoch={epoch + 1} train_loss={train_loss:.6f} val_loss={val_loss:.6f}")
         if val_loss < best:
             best = val_loss
-            save_checkpoint(args.output, model=model.state_dict(), model_args=model_args, epoch=epoch + 1, val_loss=val_loss)
+            save_checkpoint(
+                args.output,
+                model=model.state_dict(),
+                optimizer=optimizer.state_dict(),
+                model_args=model_args,
+                epoch=epoch + 1,
+                val_loss=val_loss,
+                best_val_loss=best,
+            )
+        save_checkpoint(
+            last_output,
+            model=model.state_dict(),
+            optimizer=optimizer.state_dict(),
+            model_args=model_args,
+            epoch=epoch + 1,
+            val_loss=val_loss,
+            best_val_loss=best,
+        )
 
 
 if __name__ == "__main__":
     main()
-
